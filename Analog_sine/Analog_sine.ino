@@ -10,12 +10,17 @@
 // Changed by Stephen Zhang for photometry 7/24/2019. 
 // Note peak sine amplitude is 3.3 V.
 
+// #define serial
 
 uint16_t table_length = 64;
-const int sineamp = 511; // Max 511. Sine wave amplitude.
-const int offset = 1023; // Max 1023. Sine wave offset. Must be at least as large as (2 x sineamp) value. Use this to prevent LED dropping.
+int sineamp = 16; // Max 511. Sine wave amplitude.
+int sineamp_new;
+int offset_factor = 9; // Sine wave offset, defined ratiometrically. Use this to prevent LED dropping. sineamp * (offset_factor + 1) must be less than 1023.
+// amplitude pin  = A2;
+float amplitude_modifier = 0.04; // Convert analog reading to sine amplitude. Max 0.5.
 volatile uint16_t sintable1[64];
-volatile uint32_t freq = 319; // LED frequency in Hz. Normally 217 or 319.
+volatile uint32_t freq = 217; // LED frequency in Hz. Normally 217 or 319.
+
 
 typedef struct                                                                    // DMAC descriptor structure
 {
@@ -32,9 +37,24 @@ dmacdescriptor descriptor __attribute__ ((aligned (16)));                       
 
 void setup()
 {
+  // Read amplitude analog in and convert
+  sineamp = analogRead(A2) *  amplitude_modifier;
+  
+  /*
+  // Debug
+  #ifdef serial
+  Serial.begin(2000000);
+  while(!Serial);
+  Serial.print("amplitude = ");
+  Serial.print(sineamp);
+  Serial.print("\t offset = ");
+  Serial.println(offset_factor * sineamp);
+  #endif
+  */
+  
   for (uint16_t i = 0; i < table_length; i++)                                     // Calculate the sine table with 32 entries
   {
-    sintable1[i] = (uint16_t)((sinf(2 * PI * (float)i / table_length) * sineamp) + offset - sineamp);
+    sintable1[i] = (uint16_t)((sinf(2 * PI * (float)i / table_length) * sineamp) + sineamp * offset_factor);
   }
 
   analogWriteResolution(10);                                                      // Set the DAC's resolution to 10-bits
@@ -99,19 +119,34 @@ void setup()
  
   DMAC->CHID.reg = DMAC_CHID_ID(0);                // Select DMAC channel 
   DMAC->CHCTRLA.reg |= DMAC_CHCTRLA_ENABLE;        // Enable DMAC channel 
-
-  
-  
 }
 
 void loop() {}                                      // We don't do anything in the loop
 
-
 void DMAC_Handler()
 {
-                       
+  sineamp_new = analogRead(A2) * amplitude_modifier; // Read amplitude pin value
+  
+  if ((sineamp_new) != sineamp){       // If there is an amplitude change
+    sineamp = sineamp_new;           // Update new amplitude
+
+    /*
+    #ifdef serial
+    Serial.print("amplitude = ");
+    Serial.print(sineamp);
+    Serial.print("\t offset = ");
+    Serial.println(offset_factor * sineamp);
+    #endif
+    */
+    
+    digitalWrite(13, HIGH);
+    for (uint16_t i = 0; i < table_length; i++)                                     // make new sine table
+    {
+      sintable1[i] = (uint16_t)((sinf(2 * PI * (float)i / table_length) * sineamp) + sineamp * offset_factor);
+    }
+    digitalWrite(13, LOW);
+  }
+  
   DMAC->CHCTRLB.reg |= DMAC_CHCTRLB_CMD_RESUME;           // Resume the DMAC channel
   DMAC->CHINTFLAG.bit.SUSP = 1;                           // Clear the DMAC channel suspend (SUSP) interrupt flag  
-  
-  
 }
